@@ -7,6 +7,7 @@ import { handleViewerAssets } from './hiscoresServer.js';
 import { handleScreenshotsListPage, handleScreenshotFilePage } from './pages/screenshots.js';
 import { handleScreenshotUpload, handleExportCollisionApi } from './pages/api.js';
 import { handleDisclaimerPage, handleMapviewPage, handlePublicFiles } from './pages/static.js';
+import { handleHomePage, handleRegisterPage } from './pages/register.js';
 import { WebSocketData, handleWebSocketUpgrade, handleGatewayEndpointGet, websocketHandlers } from './websocket.js';
 
 export type { WebSocketData };
@@ -128,7 +129,15 @@ export async function startWeb() {
                 }
             }
 
-            // Client pages (/, /bot, /rs2.cgi)
+            // Home page (/)
+            const homeResponse = await handleHomePage(url);
+            if (homeResponse) return homeResponse;
+
+            // Registration page (/register)
+            const registerResponse = await handleRegisterPage(req, url);
+            if (registerResponse) return registerResponse;
+
+            // Client pages (/bot, /rs2.cgi, /vanilla)
             const clientResponse = await handleClientPage(url);
             if (clientResponse) return clientResponse;
 
