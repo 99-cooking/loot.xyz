@@ -2,64 +2,57 @@ import { db } from '#/db/query.js';
 import Environment from '#/util/Environment.js';
 import { tryParseInt } from '#/util/TryParse.js';
 import { escapeHtml, SKILL_NAMES, ENABLED_SKILLS } from '../utils.js';
+import { rsLayout } from './layout.js';
 
 const hiddenNames = Environment.HISCORES_HIDDEN_NAMES;
 
-// Shared CSS styles for hiscores pages
-const HISCORES_STYLES = `
-    body, p, td { font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
-    body { background: #000; color: #fff; margin: 0; padding: 0; }
-    a { text-decoration: none; }
-    .b { border-style: outset; border-width: 3pt; border-color: #373737; }
-    .b2 { border-style: outset; border-width: 3pt; border-color: #570700; }
-    .e { border: 2px solid #382418; }
-    .c { text-decoration: none; color: #fff; }
-    .c:hover { text-decoration: underline; }
-    .white { text-decoration: none; color: #FFFFFF; }
-    .red { text-decoration: none; color: #E10505; }
-    .lblue { text-decoration: none; color: #9DB8C3; }
-    .dblue { text-decoration: none; color: #0D6083; }
-    .yellow { text-decoration: none; color: #FFE139; }
-    .green { text-decoration: none; color: #04A800; }
-    .purple { text-decoration: none; color: #C503FD; }
-    .text-orange { color: #ffbb22; }
-    select { background-color: #B1977E; }
-    input { margin-top: 4px; }
-`;
-
 // Format gold value with K/M suffixes
 function formatGold(value: number): string {
-    if (value >= 10_000_000) {
-        return `${Math.floor(value / 1_000_000)}M`;
-    }
-    if (value >= 100_000) {
-        return `${Math.floor(value / 1_000)}K`;
-    }
+    if (value >= 10_000_000) return `${Math.floor(value / 1_000_000)}M`;
+    if (value >= 100_000) return `${Math.floor(value / 1_000)}K`;
     return value.toLocaleString();
 }
 
-// Format playtime (in game ticks, 0.6s each) to human-readable string
+// Format playtime (in game ticks, 0.6s each)
 function formatPlaytime(ticks: number): string {
     const totalSeconds = Math.floor(ticks * 0.6);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
-    if (hours > 0) {
-        return `${hours}h ${minutes}m`;
-    }
+    if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
 }
 
-// Player profile page handler
+// Build the skill sidebar HTML
+function buildSkillSidebar(profile: string, activeCategory: number): string {
+    const skills = [
+        { id: 0, name: 'Overall' },
+        ...ENABLED_SKILLS.map(s => ({ id: s.id + 1, name: s.name }))
+    ];
+
+    const items = skills.map(s =>
+        `<li><a href="/hiscores?category=${s.id}&profile=${profile}"${s.id === activeCategory ? ' class="active"' : ''}>${s.name}</a></li>`
+    ).join('\n');
+
+    return `
+    <div class="rs-panel">
+        <div class="rs-panel-header"><h2>Skills</h2></div>
+        <div class="rs-panel-body" style="padding: 5px 0;">
+            <ul class="hs-skill-list">
+                ${items}
+                <li class="hs-special"><a href="/hiscores/outfit?profile=${profile}">Equipment</a></li>
+            </ul>
+        </div>
+    </div>`;
+}
+
+// Player profile page
 export async function handleHiscoresPlayerPage(url: URL): Promise<Response | null> {
     const match = url.pathname.match(/^\/hi(?:gh)?scores\/player\/([^/]+)\/?$/);
-    if (!match) {
-        return null;
-    }
+    if (!match) return null;
 
     const username = decodeURIComponent(match[1]);
     const profile = url.searchParams.get('profile') || 'main';
 
-    // Find the account
     const accountQuery = db
         .selectFrom('account')
         .select(['id', 'username'])
@@ -71,13 +64,12 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
     ).executeTakeFirst();
 
     if (!account) {
-        return new Response(`Player "${escapeHtml(username)}" not found.`, {
-            status: 404,
-            headers: { 'Content-Type': 'text/html' }
+        const content = `<div class="rs-panel"><div class="rs-panel-body" style="text-align:center;">Player "${escapeHtml(username)}" not found.</div></div>`;
+        return new Response(rsLayout('Player Not Found', content, 'hiscores'), {
+            status: 404, headers: { 'Content-Type': 'text/html' }
         });
     }
 
-    // Get overall stats
     const overallStats = await db
         .selectFrom('hiscore_large')
         .select(['level', 'value', 'playtime'])
@@ -86,7 +78,6 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
         .where('type', '=', 0)
         .executeTakeFirst();
 
-    // Get overall rank (by level DESC, playtime ASC)
     let overallRank = '-';
     if (overallStats) {
         let rankQuery = db
@@ -110,7 +101,6 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
         overallRank = String((Number(rankResult?.rank) || 0) + 1);
     }
 
-    // Get individual skill stats
     const skillStats = await db
         .selectFrom('hiscore')
         .select(['type', 'level', 'value', 'playtime'])
@@ -118,24 +108,18 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
         .where('profile', '=', profile)
         .execute();
 
-    // Build skill rows with ranks
-    const skillRows: string[] = [];
-
-    // Overall row first
-    skillRows.push(`
+    // Build skill rows
+    let skillRows = `
         <tr>
-            <td><a href="/hiscores?category=0&profile=${profile}" class="c">Overall</a></td>
-            <td align="right">${overallRank}</td>
-            <td align="right">${overallStats ? overallStats.level.toLocaleString() : '-'}</td>
-            <td align="right">${overallStats ? formatPlaytime(overallStats.playtime) : '-'}</td>
-        </tr>
-    `);
+            <td><a href="/hiscores?category=0&profile=${profile}">Overall</a></td>
+            <td class="right">${overallRank}</td>
+            <td class="right">${overallStats ? overallStats.level.toLocaleString() : '-'}</td>
+            <td class="right">${overallStats ? formatPlaytime(overallStats.playtime) : '-'}</td>
+        </tr>`;
 
-    // Individual skills
     for (const skill of ENABLED_SKILLS) {
         const stat = skillStats.find(s => s.type === skill.id + 1);
         let rank = '-';
-
         if (stat) {
             let skillRankQuery = db
                 .selectFrom('hiscore')
@@ -157,114 +141,43 @@ export async function handleHiscoresPlayerPage(url: URL): Promise<Response | nul
             const rankResult = await skillRankQuery.executeTakeFirst();
             rank = String((Number(rankResult?.rank) || 0) + 1);
         }
-
-        skillRows.push(`
+        skillRows += `
             <tr>
-                <td><a href="/hiscores?category=${skill.id + 1}&profile=${profile}" class="c">${skill.name}</a></td>
-                <td align="right">${rank}</td>
-                <td align="right">${stat ? stat.level.toLocaleString() : '-'}</td>
-                <td align="right">${stat ? formatPlaytime(stat.playtime) : '-'}</td>
-            </tr>
-        `);
+                <td><a href="/hiscores?category=${skill.id + 1}&profile=${profile}">${skill.name}</a></td>
+                <td class="right">${rank}</td>
+                <td class="right">${stat ? stat.level.toLocaleString() : '-'}</td>
+                <td class="right">${stat ? formatPlaytime(stat.playtime) : '-'}</td>
+            </tr>`;
     }
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-    <title>Hiscores for ${escapeHtml(account.username)}</title>
-    <style>${HISCORES_STYLES}</style>
-</head>
-<body>
-<table width="100%" height="100%" cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="middle">
-            <center>
-                <div style="width: 600px; position: relative;">
+    const content = `
+    <div class="rs-panel" style="max-width: 600px; margin: 0 auto;">
+        <div class="rs-panel-header">
+            <h2>Hiscores for ${escapeHtml(account.username)}</h2>
+        </div>
+        <div class="rs-panel-body">
+            <div style="text-align:center; margin-bottom: 15px;">
+                <a href="/hiscores?profile=${profile}">← Back to All Hiscores</a>
+            </div>
+            <table class="hs-profile-table">
+                <tr>
+                    <th>Skill</th>
+                    <th class="right">Rank</th>
+                    <th class="right">Level</th>
+                    <th class="right">Time</th>
+                </tr>
+                ${skillRows}
+            </table>
+        </div>
+    </div>`;
 
-<!-- Top edge decoration -->
-<table cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="top"><img src="/img/edge_a.jpg" width="100" height="43"></td>
-        <td valign="top"><img src="/img/edge_c.jpg" width="400" height="42"></td>
-        <td valign="top"><img src="/img/edge_d.jpg" width="100" height="43"></td>
-    </tr>
-</table>
-
-<!-- Main content area -->
-<table width="600" cellpadding="0" cellspacing="0" border="0" background="/img/background2.jpg">
-    <tr>
-        <td valign="bottom">
-            <center>
-                <br>
-                <!-- Title box -->
-                <table width="350" bgcolor="black" cellpadding="4">
-                    <tr>
-                        <td class="e">
-                            <center>
-                                <b>Hiscores for ${escapeHtml(account.username)}</b><br>
-                                <a href="/" class="c">Main menu</a> | <a href="/hiscores?profile=${profile}" class="c">All Hiscores</a>
-                            </center>
-                        </td>
-                    </tr>
-                </table>
-                <br>
-
-                <!-- Profile selector -->
-                <center>
-                    <form method="GET" action="/hiscores/player/${encodeURIComponent(account.username)}">
-                        <select name="profile" onchange="this.form.submit()">
-                            <option value="main"${profile === 'main' ? ' selected' : ''}>Main</option>
-                        </select>
-                    </form>
-                </center>
-
-                <!-- Stats table -->
-                <table width="400" bgcolor="black" cellpadding="4">
-                    <tr>
-                        <td class="e">
-                            <table width="100%" cellspacing="2" cellpadding="2">
-                                <tr>
-                                    <td><b>Skill</b></td>
-                                    <td align="right"><b>Rank</b></td>
-                                    <td align="right"><b>Level</b></td>
-                                    <td align="right"><b>Time</b></td>
-                                </tr>
-                                ${skillRows.join('')}
-                            </table>
-                        </td>
-                    </tr>
-                </table>
-
-                <br>
-            </center>
-        </td>
-    </tr>
-</table>
-
-<!-- Bottom edge decoration -->
-<table cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="top"><img src="/img/edge_g2.jpg" width="100" height="43"></td>
-        <td valign="top"><img src="/img/edge_c.jpg" width="400" height="42"></td>
-        <td valign="top"><img src="/img/edge_h2.jpg" width="100" height="43"></td>
-    </tr>
-</table>
-
-                </div>
-            </center>
-        </td>
-    </tr>
-</table>
-</body>
-</html>`;
-
-    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+    return new Response(rsLayout(`Hiscores - ${escapeHtml(account.username)}`, content, 'hiscores'), {
+        headers: { 'Content-Type': 'text/html' }
+    });
 }
 
 export async function handleHiscoresPage(url: URL): Promise<Response | null> {
-    if (!/^\/hi(?:gh)?scores\/?$/.test(url.pathname)) {
-        return null;
-    }
+    if (!/^\/hi(?:gh)?scores\/?$/.test(url.pathname)) return null;
 
     const category = tryParseInt(url.searchParams.get('category'), -1);
     const profile = url.searchParams.get('profile') || 'main';
@@ -276,7 +189,6 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
     let searchedPlayer: { rank: number; username: string; level: number; playtime: number } | null = null;
 
     if (category === -1 || category === 0) {
-        // Overall - query hiscore_large
         let query = db
             .selectFrom('hiscore_large')
             .innerJoin('account', 'account.id', 'hiscore_large.account_id')
@@ -289,18 +201,11 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
         if (hiddenNames.length > 0) {
             query = query.where(eb => eb.not(eb(eb.fn('lower', ['account.username']), 'in', hiddenNames)));
         }
-
         const allResults = await query.execute();
-
-        // Handle rank search - show 21 entries starting from that rank
         const startRank = rankSearch > 0 ? rankSearch - 1 : 0;
         rows = allResults.slice(startRank, startRank + 21).map((r, i) => ({
-            rank: startRank + i + 1,
-            username: r.username,
-            level: r.level,
-            playtime: r.playtime
+            rank: startRank + i + 1, username: r.username, level: r.level, playtime: r.playtime
         }));
-
         if (playerSearch) {
             const idx = allResults.findIndex(r => r.username.toLowerCase() === playerSearch);
             if (idx !== -1) {
@@ -310,7 +215,6 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
         }
         selectedSkill = 'Overall';
     } else {
-        // Individual skill - query hiscore
         const skillIndex = category - 1;
         const skillName = SKILL_NAMES[skillIndex];
         if (skillName) {
@@ -326,17 +230,11 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
             if (hiddenNames.length > 0) {
                 query = query.where(eb => eb.not(eb(eb.fn('lower', ['account.username']), 'in', hiddenNames)));
             }
-
             const allResults = await query.execute();
-
             const startRank = rankSearch > 0 ? rankSearch - 1 : 0;
             rows = allResults.slice(startRank, startRank + 21).map((r, i) => ({
-                rank: startRank + i + 1,
-                username: r.username,
-                level: r.level,
-                playtime: r.playtime
+                rank: startRank + i + 1, username: r.username, level: r.level, playtime: r.playtime
             }));
-
             if (playerSearch) {
                 const idx = allResults.findIndex(r => r.username.toLowerCase() === playerSearch);
                 if (idx !== -1) {
@@ -348,252 +246,76 @@ export async function handleHiscoresPage(url: URL): Promise<Response | null> {
         }
     }
 
-    const skillOptions = [
-        { id: 0, name: 'Overall' },
-        ...ENABLED_SKILLS.map(s => ({ id: s.id + 1, name: s.name }))
-    ];
-
     const currentCategory = category === -1 ? 0 : category;
 
-    // Build skill links for sidebar
-    const skillLinks = skillOptions.map(s =>
-        `<tr><td><a href="/hiscores?category=${s.id}&profile=${profile}" class="c">${s.name}</a></td></tr>`
-    ).join('\n')
-        + `\n<tr><td>&nbsp;</td></tr>\n<tr><td><a href="/hiscores/outfit?profile=${profile}" class="c text-orange">Equipment</a></td></tr>`;
+    const tableRows = rows.map(r => `
+        <tr>
+            <td class="right">${r.rank}</td>
+            <td><a href="/hiscores/player/${encodeURIComponent(r.username)}?profile=${profile}">${escapeHtml(r.username)}</a></td>
+            <td class="right">${r.level.toLocaleString()}</td>
+            <td class="right">${formatPlaytime(r.playtime)}</td>
+        </tr>`).join('');
 
-    // Build data rows
-    const rankCol = rows.map(r => `${r.rank}<br>`).join('\n');
-    const nameCol = rows.map(r =>
-        `<a href="/hiscores/player/${encodeURIComponent(r.username)}?profile=${profile}" class="c">${escapeHtml(r.username)}</a><br>`
-    ).join('\n');
-    const levelCol = rows.map(r => `${r.level.toLocaleString()}<br>`).join('\n');
-    const timeCol = rows.map(r => `${formatPlaytime(r.playtime)}<br>`).join('\n');
+    const content = `
+    <div class="hs-layout">
+        <div class="hs-sidebar">
+            ${buildSkillSidebar(profile, currentCategory)}
+        </div>
+        <div class="hs-main">
+            <div class="rs-panel">
+                <div class="rs-panel-header"><h2>${selectedSkill} Hiscores</h2></div>
+                <div class="rs-panel-body">
+                    ${rows.length > 0 ? `
+                    <table class="hs-table">
+                        <tr>
+                            <th class="right">Rank</th>
+                            <th>Name</th>
+                            <th class="right">Level</th>
+                            <th class="right">Time</th>
+                        </tr>
+                        ${tableRows}
+                    </table>` : '<p style="text-align:center;">No players found</p>'}
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-    <title>${selectedSkill} Hiscores</title>
-    <style>
-        body, p, td { font-family: Arial, Helvetica, sans-serif; font-size: 13px; }
-        body { background: #000; color: #fff; margin: 0; padding: 0; }
-        a { text-decoration: none; }
-        .b { border-style: outset; border-width: 3pt; border-color: #373737; }
-        .b2 { border-style: outset; border-width: 3pt; border-color: #570700; }
-        .e { border: 2px solid #382418; }
-        .c { text-decoration: none; color: #fff; }
-        .c:hover { text-decoration: underline; }
-        .white { text-decoration: none; color: #FFFFFF; }
-        .red { text-decoration: none; color: #E10505; }
-        .lblue { text-decoration: none; color: #9DB8C3; }
-        .dblue { text-decoration: none; color: #0D6083; }
-        .yellow { text-decoration: none; color: #FFE139; }
-        .green { text-decoration: none; color: #04A800; }
-        .purple { text-decoration: none; color: #C503FD; }
-        .text-orange { color: #ffbb22; }
-        select { background-color: #B1977E; }
-        input { margin-top: 4px; }
-    </style>
-</head>
-<body>
-<table width="100%" height="100%" cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="middle">
-            <center>
-                <div style="width: 600px; position: relative;">
+                    <div class="hs-search-row">
+                        <div class="hs-search-box">
+                            <form action="/hiscores">
+                                <b>Search by rank</b>
+                                <input type="number" maxlength="12" size="12" name="rank" value="">
+                                <input type="hidden" name="category" value="${currentCategory}">
+                                <input type="hidden" name="profile" value="${profile}">
+                                <br><input type="submit" value="Search">
+                            </form>
+                        </div>
+                        <div class="hs-search-box">
+                            <form action="/hiscores" autocomplete="off">
+                                <b>Search by name</b>
+                                <input type="text" maxlength="12" size="12" name="player" value="${escapeHtml(playerSearch)}" autocomplete="off">
+                                <input type="hidden" name="category" value="${currentCategory}">
+                                <input type="hidden" name="profile" value="${profile}">
+                                <br><input type="submit" value="Search">
+                            </form>
+                        </div>
+                    </div>
 
-<!-- Top edge decoration -->
-<table cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="top"><img src="/img/edge_a.jpg" width="100" height="43"></td>
-        <td valign="top"><img src="/img/edge_c.jpg" width="400" height="42"></td>
-        <td valign="top"><img src="/img/edge_d.jpg" width="100" height="43"></td>
-    </tr>
-</table>
-
-<!-- Main content area -->
-<table width="600" cellpadding="0" cellspacing="0" border="0" background="/img/background2.jpg">
-    <tr>
-        <td valign="bottom">
-            <center>
-                <br>
-                <!-- Title box -->
-                <table width="250" bgcolor="black" cellpadding="4">
-                    <tr>
-                        <td class="e">
-                            <center>
-                                <b>${selectedSkill} Hiscores</b><br>
-                                <a href="/" class="c">Main menu</a>
-                            </center>
-                        </td>
-                    </tr>
-                </table>
-                <br>
-
-                <!-- Profile selector -->
-                <center>
-                    <form id="profile-select-form" method="GET" action="/hiscores">
-                        <input type="hidden" name="category" value="${currentCategory}">
-                        <select name="profile" id="profile" onchange="this.form.submit()">
-                            <option value="main"${profile === 'main' ? ' selected' : ''}>Main</option>
-                        </select>
-                    </form>
-                </center>
-
-                <!-- Two column layout: skills + data -->
-                <table>
-                    <tr>
-                        <td width="160" valign="top">
-                            <center>
-                                <b>Select hiscore table</b><br>
-                                <table width="150" height="400" bgcolor="black" cellpadding="4">
-                                    <tr>
-                                        <td class="e" valign="top">
-                                            <center>
-                                                <table height="380" cellspacing="1" cellpadding="0">
-                                                    ${skillLinks}
-                                                </table>
-                                            </center>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </center>
-                        </td>
-
-                        <td width="290" valign="top">
-                            <center>
-                                <b>${selectedSkill} Hiscores</b><br>
-                                <table width="300" height="400" bgcolor="black" cellpadding="4">
-                                    <tr>
-                                        <td class="e" valign="top">
-                                            ${rows.length > 0 ? `<table>
-                                                <tr>
-                                                    <td align="right" valign="top">
-                                                        <b>Rank</b><br>
-                                                        ${rankCol}
-                                                    </td>
-                                                    <td>&nbsp;</td>
-                                                    <td valign="top">
-                                                        <b>Name</b><br>
-                                                        ${nameCol}
-                                                    </td>
-                                                    <td>&nbsp;</td>
-                                                    <td valign="top">
-                                                        <b>Level</b><br>
-                                                        ${levelCol}
-                                                    </td>
-                                                    <td>&nbsp;</td>
-                                                    <td align="right" valign="top">
-                                                        <b>Time</b><br>
-                                                        ${timeCol}
-                                                    </td>
-                                                </tr>
-                                            </table>` : '<center><br>No players found</center>'}
-                                        </td>
-                                    </tr>
-                                </table>
-                            </center>
-                        </td>
-                    </tr>
-                </table>
-
-                <br>
-
-                <!-- Search boxes -->
-                <table>
-                    <tr>
-                        <td>
-                            <table width="200" bgcolor="black" cellpadding="4">
-                                <tr>
-                                    <td class="b" bgcolor="#474747" background="/img/stoneback.gif">
-                                        <center>
-                                            <form action="/hiscores">
-                                                <b>Search by rank</b><br>
-                                                <input type="number" maxlength="12" size="12" name="rank" value="">
-                                                <input type="hidden" name="category" value="${currentCategory}">
-                                                <input type="hidden" name="profile" value="${profile}">
-                                                <br>
-                                                <input type="submit" value="Search">
-                                            </form>
-                                        </center>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                        <td>&nbsp;&nbsp;&nbsp;</td>
-                        <td>
-                            <table width="200" bgcolor="black" cellpadding="4">
-                                <tr>
-                                    <td class="b" bgcolor="#474747" background="/img/stoneback.gif">
-                                        <center>
-                                            <form action="/hiscores" autocomplete="off">
-                                                <b>Search by name</b><br>
-                                                <input type="text" maxlength="12" size="12" name="player" value="${escapeHtml(playerSearch)}" autocomplete="off">
-                                                <input type="hidden" name="category" value="${currentCategory}">
-                                                <input type="hidden" name="profile" value="${profile}">
-                                                <br>
-                                                <input type="submit" value="Search">
-                                            </form>
-                                        </center>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                </table>
-
-                ${searchedPlayer ? `
-                <br>
-                <table width="400" bgcolor="black" cellpadding="4">
-                    <tr>
-                        <td class="e">
-                            <center>
-                                <b>Search Result</b><br>
-                                Rank: ${searchedPlayer.rank} |
-                                <a href="/hiscores/player/${encodeURIComponent(searchedPlayer.username)}?profile=${profile}" class="c">${escapeHtml(searchedPlayer.username)}</a> |
-                                Level: ${searchedPlayer.level.toLocaleString()} |
-                                Time: ${formatPlaytime(searchedPlayer.playtime)}
-                            </center>
-                        </td>
-                    </tr>
-                </table>
-                ` : playerSearch ? `
-                <br>
-                <table width="400" bgcolor="black" cellpadding="4">
-                    <tr>
-                        <td class="e">
-                            <center>Player "${escapeHtml(playerSearch)}" not found.</center>
-                        </td>
-                    </tr>
-                </table>
-                ` : ''}
-
-                <br>
-            </center>
-        </td>
-    </tr>
-</table>
-
-<!-- Bottom edge decoration -->
-<table cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="top"><img src="/img/edge_g2.jpg" width="100" height="43"></td>
-        <td valign="top"><img src="/img/edge_c.jpg" width="400" height="42"></td>
-        <td valign="top"><img src="/img/edge_h2.jpg" width="100" height="43"></td>
-    </tr>
-</table>
-
+                    ${searchedPlayer ? `
+                    <div class="hs-search-result">
+                        Rank: ${searchedPlayer.rank} |
+                        <a href="/hiscores/player/${encodeURIComponent(searchedPlayer.username)}?profile=${profile}">${escapeHtml(searchedPlayer.username)}</a> |
+                        Level: ${searchedPlayer.level.toLocaleString()} |
+                        Time: ${formatPlaytime(searchedPlayer.playtime)}
+                    </div>` : playerSearch ? `
+                    <div class="hs-search-result">Player "${escapeHtml(playerSearch)}" not found.</div>` : ''}
                 </div>
-            </center>
-        </td>
-    </tr>
-</table>
-</body>
-</html>`;
+            </div>
+        </div>
+    </div>`;
 
-    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+    return new Response(rsLayout(`${selectedSkill} Hiscores`, content, 'hiscores'), {
+        headers: { 'Content-Type': 'text/html' }
+    });
 }
 
-// Richest outfit leaderboard handler
+// Equipment/outfit hiscores
 export async function handleHiscoresOutfitPage(url: URL): Promise<Response | null> {
     const match = url.pathname.match(/^\/hi(?:gh)?scores\/outfit\/?$/);
     if (!match) return null;
@@ -614,7 +336,7 @@ export async function handleHiscoresOutfitPage(url: URL): Promise<Response | nul
 
     const results = await query.execute();
 
-    const rows = results.map((r, i) => {
+    const tableRows = results.map((r, i) => {
         let itemsList = '';
         try {
             const items = JSON.parse(r.items) as { id?: number; name: string; value: number }[];
@@ -629,173 +351,75 @@ export async function handleHiscoresOutfitPage(url: URL): Promise<Response | nul
         }
         return `
             <tr>
-                <td align="right">${i + 1}</td>
-                <td><a href="/hiscores/player/${encodeURIComponent(r.username)}?profile=${profile}" class="c">${escapeHtml(r.username)}</a></td>
-                <td align="right" class="yellow" title="${r.value.toLocaleString()} gp">${formatGold(r.value)}</td>
+                <td class="right">${i + 1}</td>
+                <td><a href="/hiscores/player/${encodeURIComponent(r.username)}?profile=${profile}">${escapeHtml(r.username)}</a></td>
+                <td class="right yellow" title="${r.value.toLocaleString()} gp">${formatGold(r.value)}</td>
                 <td style="font-size:11px">${itemsList}</td>
-            </tr>
-        `;
-    });
+            </tr>`;
+    }).join('');
 
-    // Sidebar skill links
-    const skillOptions = [
-        { id: 0, name: 'Overall' },
-        ...ENABLED_SKILLS.map(s => ({ id: s.id + 1, name: s.name }))
-    ];
-    const skillLinks = skillOptions.map(s =>
-        `<tr><td><a href="/hiscores?category=${s.id}&profile=${profile}" class="c">${s.name}</a></td></tr>`
-    ).join('\n')
-        + `\n<tr><td>&nbsp;</td></tr>\n<tr><td><a href="/hiscores/outfit?profile=${profile}" class="c text-orange">Equipment</a></td></tr>`;
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-    <title>Equipment Hiscores</title>
-    <style>${HISCORES_STYLES}</style>
-</head>
-<body>
-<table width="100%" height="100%" cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="middle">
-            <center>
-                <div style="width: 600px; position: relative;">
-
-<!-- Top edge decoration -->
-<table cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="top"><img src="/img/edge_a.jpg" width="100" height="43"></td>
-        <td valign="top"><img src="/img/edge_c.jpg" width="400" height="42"></td>
-        <td valign="top"><img src="/img/edge_d.jpg" width="100" height="43"></td>
-    </tr>
-</table>
-
-<!-- Main content area -->
-<table width="600" cellpadding="0" cellspacing="0" border="0" background="/img/background2.jpg">
-    <tr>
-        <td valign="bottom">
-            <center>
-                <br>
-                <!-- Title box -->
-                <table width="350" bgcolor="black" cellpadding="4">
-                    <tr>
-                        <td class="e">
-                            <center>
-                                <b>Equipment Hiscores</b><br>
-                                <a href="/" class="c">Main menu</a> | <a href="/hiscores?profile=${profile}" class="c">All Hiscores</a>
-                            </center>
-                        </td>
-                    </tr>
-                </table>
-                <br>
-
-                <!-- Two column layout: skills + data -->
-                <table>
-                    <tr>
-                        <td width="160" valign="top">
-                            <center>
-                                <b>Select hiscore table</b><br>
-                                <table width="150" height="400" bgcolor="black" cellpadding="4">
-                                    <tr>
-                                        <td class="e" valign="top">
-                                            <center>
-                                                <table height="380" cellspacing="1" cellpadding="0">
-                                                    ${skillLinks}
-                                                </table>
-                                            </center>
-                                        </td>
-                                    </tr>
-                                </table>
-                            </center>
-                        </td>
-
-                        <td width="400" valign="top">
-                            <center>
-                                <b>Equipment</b><br>
-                                <table width="420" bgcolor="black" cellpadding="4">
-                                    <tr>
-                                        <td class="e" valign="top">
-                                            ${rows.length > 0 ? `<table width="100%" cellspacing="2" cellpadding="2">
-                                                <tr>
-                                                    <td><b>#</b></td>
-                                                    <td><b>Name</b></td>
-                                                    <td align="right"><b>Value</b></td>
-                                                    <td><b>Items</b></td>
-                                                </tr>
-                                                ${rows.join('')}
-                                            </table>` : '<center><br>No outfit data found</center>'}
-                                        </td>
-                                    </tr>
-                                </table>
-                            </center>
-                        </td>
-                    </tr>
-                </table>
-
-                <br>
-            </center>
-        </td>
-    </tr>
-</table>
-
-<!-- Bottom edge decoration -->
-<table cellpadding="0" cellspacing="0">
-    <tr>
-        <td valign="top"><img src="/img/edge_g2.jpg" width="100" height="43"></td>
-        <td valign="top"><img src="/img/edge_c.jpg" width="400" height="42"></td>
-        <td valign="top"><img src="/img/edge_h2.jpg" width="100" height="43"></td>
-    </tr>
-</table>
-
+    const content = `
+    <div class="hs-layout">
+        <div class="hs-sidebar">
+            ${buildSkillSidebar(profile, -1)}
+        </div>
+        <div class="hs-main">
+            <div class="rs-panel">
+                <div class="rs-panel-header"><h2>Equipment Hiscores</h2></div>
+                <div class="rs-panel-body">
+                    ${results.length > 0 ? `
+                    <table class="hs-table">
+                        <tr>
+                            <th class="right">#</th>
+                            <th>Name</th>
+                            <th class="right">Value</th>
+                            <th>Items</th>
+                        </tr>
+                        ${tableRows}
+                    </table>` : '<p style="text-align:center;">No outfit data found</p>'}
                 </div>
-            </center>
-        </td>
-    </tr>
-</table>
-<!-- Hidden canvas required by viewer internals -->
-<canvas id="canvas" width="256" height="256" style="display:none"></canvas>
-<script type="module">
-    import { ItemViewer } from '/viewer/viewer.js';
-
-    const icons = document.querySelectorAll('canvas.item-icon');
-    if (icons.length > 0) {
-        const viewer = new ItemViewer();
-        try {
-            await viewer.init('');
-            let rendered = 0, failed = 0;
-            for (const el of icons) {
-                const id = parseInt(el.dataset.itemId);
-                if (isNaN(id)) continue;
-                try {
-                    const icon = viewer.renderItemIconAsImageData(id);
-                    if (icon) {
-                        el.getContext('2d').putImageData(icon, 0, 0);
-                        rendered++;
-                    } else {
-                        el.style.display = 'none';
-                        const fallback = document.createElement('span');
-                        fallback.textContent = el.title.split(' (')[0];
-                        fallback.title = el.title;
-                        el.parentNode.insertBefore(fallback, el);
-                        failed++;
-                    }
-                } catch (renderErr) {
-                    failed++;
+            </div>
+        </div>
+    </div>
+    <!-- Hidden canvas required by viewer internals -->
+    <canvas id="canvas" width="256" height="256" style="display:none"></canvas>
+    <script type="module">
+        import { ItemViewer } from '/viewer/viewer.js';
+        const icons = document.querySelectorAll('canvas.item-icon');
+        if (icons.length > 0) {
+            const viewer = new ItemViewer();
+            try {
+                await viewer.init('');
+                for (const el of icons) {
+                    const id = parseInt(el.dataset.itemId);
+                    if (isNaN(id)) continue;
+                    try {
+                        const icon = viewer.renderItemIconAsImageData(id);
+                        if (icon) {
+                            el.getContext('2d').putImageData(icon, 0, 0);
+                        } else {
+                            el.style.display = 'none';
+                            const fallback = document.createElement('span');
+                            fallback.textContent = el.title.split(' (')[0];
+                            fallback.title = el.title;
+                            el.parentNode.insertBefore(fallback, el);
+                        }
+                    } catch (e) {}
+                }
+            } catch (err) {
+                console.error('ItemViewer init failed:', err);
+                for (const el of icons) {
+                    const fallback = document.createElement('span');
+                    fallback.textContent = el.title.split(' (')[0];
+                    fallback.title = el.title;
+                    el.parentNode.insertBefore(fallback, el);
+                    el.style.display = 'none';
                 }
             }
-        } catch (err) {
-            console.error('ItemViewer init failed:', err);
-            for (const el of icons) {
-                const fallback = document.createElement('span');
-                fallback.textContent = el.title.split(' (')[0];
-                fallback.title = el.title;
-                el.parentNode.insertBefore(fallback, el);
-                el.style.display = 'none';
-            }
         }
-    }
-</script>
-</body>
-</html>`;
+    </script>`;
 
-    return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+    return new Response(rsLayout('Equipment Hiscores', content, 'hiscores'), {
+        headers: { 'Content-Type': 'text/html' }
+    });
 }
