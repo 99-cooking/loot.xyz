@@ -161,6 +161,7 @@ export function layout(title: string, content: string, activePage: string = ''):
         <p>Powered by <a href="https://github.com/LostCityRS/Server">LostCity</a> | 
            SDK by <a href="${GITHUB_URL}">rs-sdk</a> |
            Hosted by <a href="https://github.com/99-cooking">99 Cooking</a></p>
+        <p style="margin-top: 12px; font-size: 0.75em; color: #555;">This is a fan-made project and is not affiliated with or endorsed by Jagex Ltd. RuneScape is a registered trademark of Jagex Ltd.</p>
     </footer>
 </body>
 </html>`;
