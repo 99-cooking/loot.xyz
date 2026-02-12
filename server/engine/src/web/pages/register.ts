@@ -62,6 +62,14 @@ export async function handleHomePage(url: URL): Promise<Response | null> {
             <h3>Members Content</h3>
             <p>All members areas and skills unlocked for everyone.</p>
         </div>
+        <div class="feature">
+            <h3>2x Game Speed</h3>
+            <p>300ms tick rate — twice as fast as the original 600ms. Everything moves quicker.</p>
+        </div>
+        <div class="feature">
+            <h3>No Random Events</h3>
+            <p>Anti-botting random events are disabled. Play uninterrupted.</p>
+        </div>
     </div>
 
     <div class="card">
