@@ -65,21 +65,6 @@ export async function handleHomePage(url: URL): Promise<Response | null> {
     </div>
 
     <div class="card">
-        <h2>Gameplay Modifications</h2>
-        <p style="color: #ccc; margin-bottom: 15px;">Custom changes active on this server:</p>
-        <div class="features" style="margin-top: 0;">
-            <div class="feature">
-                <h3>Infinite Run Energy</h3>
-                <p>Players never run out of energy. Sprint everywhere, all the time.</p>
-            </div>
-            <div class="feature">
-                <h3>No Random Events</h3>
-                <p>Anti-botting random events are disabled. No interruptions.</p>
-            </div>
-        </div>
-    </div>
-
-    <div class="card">
         <h2>Quick Start</h2>
         <p>1. <a href="/register">Register an account</a> or create one when you first log in</p>
         <p>2. <a href="/play">Launch the game client</a></p>
